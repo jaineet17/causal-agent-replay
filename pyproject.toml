@@ -1,0 +1,81 @@
+[project]
+name = "causal-agent-replay"
+version = "0.0.1"
+description = "Counterfactual replay and causal attribution over LLM-agent trajectories: find which step actually caused a bad outcome by intervening on it."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Jaineet Shah" }]
+keywords = [
+    "llm",
+    "agents",
+    "causal-inference",
+    "counterfactual",
+    "interpretability",
+    "debugging",
+    "observability",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
+dependencies = [
+    "pydantic>=2.7",
+    "typer>=0.12",
+    "numpy>=1.26",
+    "scipy>=1.13",
+    "structlog>=24.1",
+    "anthropic>=0.40",
+    "openai>=1.40",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "hypothesis>=6.100",
+    "ruff>=0.5",
+    "mypy>=1.10",
+]
+
+[project.urls]
+Homepage = "https://github.com/jaineet/causal-agent-replay"
+Repository = "https://github.com/jaineet/causal-agent-replay"
+
+[project.scripts]
+car = "car.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.11.16,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "car"
+module-root = "src"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src"]
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["scipy.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

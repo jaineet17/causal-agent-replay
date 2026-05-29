@@ -1,0 +1,294 @@
+"""Concrete policies, codecs, environment, and the recording entry point.
+
+Contains:
+  - ``ToolRegistry`` + ``MockEnvironment`` — pluggable, reproducible tools for the demo and tests.
+  - ``AnthropicPolicy`` + ``AnthropicCodec`` — the live agent-under-test on Anthropic, with the
+    Opus-4.7+ sampling-param handling the research flagged (RESEARCH s1/s4: those models 400 on
+    ``temperature``/``top_p``/``top_k``).
+  - ``SyntheticCodec`` — the simple message encoding used by in-process synthetic policies.
+  - ``record_run`` — wires a policy + environment + codec into a ``ToolLoop`` and records.
+
+OpenAI support is intentionally deferred (see ``OpenAIPolicy``): the documented shapes are in
+RESEARCH s3, but shipping untested live-provider code that claims to work would violate the
+no-silent-failure discipline. Anthropic is implemented and exercised; OpenAI raises explicitly.
+"""
+
+from __future__ import annotations
+
+import inspect
+import json
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+import structlog
+
+from car.record.toolloop import MessageCodec, ToolLoop
+from car.schemas.scm import Environment, Policy, ReplayError
+from car.schemas.trajectory import Action, Observation, Provider, State, Trajectory
+
+log = structlog.get_logger(__name__)
+
+ToolFn = Callable[[dict[str, Any]], "str | Awaitable[str]"]
+
+
+# --------------------------------------------------------------------------------------------
+# Tools / environment (reproducible, no real side effects)
+# --------------------------------------------------------------------------------------------
+class ToolRegistry:
+    """A name -> callable map. Tool fns take parsed args and return a result string."""
+
+    def __init__(self) -> None:
+        self._tools: dict[str, ToolFn] = {}
+
+    def register(self, name: str, fn: ToolFn) -> None:
+        if name in self._tools:
+            raise ValueError(f"tool {name!r} already registered")
+        self._tools[name] = fn
+
+    def names(self) -> list[str]:
+        return sorted(self._tools)
+
+    async def call(self, name: str, args: dict[str, Any]) -> str:
+        fn = self._tools.get(name)
+        if fn is None:
+            raise ReplayError(f"tool {name!r} not in registry {self.names()}")
+        result = fn(args)
+        if inspect.isawaitable(result):
+            result = await result
+        if not isinstance(result, str):
+            raise ReplayError(f"tool {name!r} returned {type(result).__name__}, expected str")
+        return result
+
+
+class MockEnvironment:
+    """An ``Environment`` backed by a ``ToolRegistry``; every observation is ``source="mocked"``.
+
+    Mocked tools are deterministic and side-effect-free, which is what makes recorded runs
+    reproducible (PLAN.md s5.1). Real tools are a deferred concern (PLAN.md s12).
+    """
+
+    def __init__(self, registry: ToolRegistry) -> None:
+        self._registry = registry
+
+    async def observe(self, action: Action) -> Observation:
+        if action.kind != "tool_call" or action.tool_name is None:
+            raise ReplayError(f"environment cannot observe a non-tool action: {action.kind}")
+        result = await self._registry.call(action.tool_name, action.tool_args or {})
+        return Observation(tool_name=action.tool_name, result=result, source="mocked")
+
+
+# --------------------------------------------------------------------------------------------
+# Anthropic
+# --------------------------------------------------------------------------------------------
+_ANTHROPIC_NO_SAMPLING = ("opus-4-7", "opus-4-8")  # models that 400 on temperature/top_p/top_k
+
+
+def _anthropic_accepts_sampling_params(model: str) -> bool:
+    """False for Claude Opus 4.7+, which reject ``temperature``/``top_p``/``top_k`` (HTTP 400)."""
+    return not any(tag in model for tag in _ANTHROPIC_NO_SAMPLING)
+
+
+class AnthropicCodec:
+    """Lossless Anthropic message serialization (``tool_use`` / ``tool_result``).
+
+    ``Action.raw`` holds the verbatim response ``content`` blocks; we reconstruct the assistant
+    turn from them and link the ``tool_result`` to the call by ``tool_use_id`` (RESEARCH s3).
+    """
+
+    def user_message(self, text: str) -> dict[str, Any]:
+        return {"role": "user", "content": text}
+
+    def assistant_message(self, action: Action) -> dict[str, Any]:
+        content = action.raw.get("content")
+        if content is None:
+            raise ReplayError("Anthropic action.raw is missing 'content'; cannot reconstruct turn")
+        return {"role": "assistant", "content": content}
+
+    def tool_result_message(self, action: Action, observation: Observation) -> dict[str, Any]:
+        tool_use_id = self._tool_use_id(action)
+        return {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": tool_use_id,
+                    "content": observation.result,
+                }
+            ],
+        }
+
+    @staticmethod
+    def _tool_use_id(action: Action) -> str:
+        for block in action.raw.get("content", []):
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                tid = block.get("id")
+                if isinstance(tid, str):
+                    return tid
+        raise ReplayError("no tool_use block with an id found in Anthropic action.raw")
+
+
+class AnthropicPolicy:
+    """The agent-under-test, backed by the Anthropic Messages API.
+
+    Constructed with an ``AsyncAnthropic`` client (injected for testability). Strips unsupported
+    sampling params for Opus 4.7+ and records the verbatim response into ``Action.raw``.
+    """
+
+    provider: Provider = "anthropic"
+
+    def __init__(self, model: str, client: Any | None = None, *, max_tokens: int = 1024) -> None:
+        self._model = model
+        self._max_tokens = max_tokens
+        if client is None:
+            try:
+                from anthropic import AsyncAnthropic
+            except ImportError as exc:  # pragma: no cover - dependency is declared
+                raise ReplayError("anthropic SDK not installed") from exc
+            client = AsyncAnthropic()
+        self._client = client
+
+    @property
+    def model_id(self) -> str:
+        return self._model
+
+    async def sample(self, state: State) -> Action:
+        kwargs: dict[str, Any] = {
+            "model": self._model,
+            "system": state.system_prompt,
+            "messages": state.messages,
+            "max_tokens": int(state.sampling.get("max_tokens", self._max_tokens)),
+        }
+        if state.tool_schemas:
+            kwargs["tools"] = state.tool_schemas
+        if _anthropic_accepts_sampling_params(self._model):
+            for key in ("temperature", "top_p", "top_k"):
+                if key in state.sampling:
+                    kwargs[key] = state.sampling[key]
+        elif any(k in state.sampling for k in ("temperature", "top_p", "top_k")):
+            log.warning(
+                "stripping unsupported sampling params for model",
+                model=self._model,
+                stripped=[k for k in ("temperature", "top_p", "top_k") if k in state.sampling],
+            )
+
+        response = await self._client.messages.create(**kwargs)
+        raw = response.model_dump()
+        return self._parse(raw)
+
+    @staticmethod
+    def _parse(raw: dict[str, Any]) -> Action:
+        blocks = raw.get("content", [])
+        text_parts = [b.get("text", "") for b in blocks if b.get("type") == "text"]
+        tool_uses = [b for b in blocks if b.get("type") == "tool_use"]
+        text = "\n".join(p for p in text_parts if p) or None
+
+        if raw.get("stop_reason") == "tool_use" or tool_uses:
+            if len(tool_uses) != 1:
+                raise ReplayError(
+                    f"expected exactly one tool_use block, got {len(tool_uses)} "
+                    f"(parallel tool calls are a deferred v0 limitation)"
+                )
+            tu = tool_uses[0]
+            return Action(
+                kind="tool_call",
+                text=text,
+                tool_name=tu.get("name"),
+                tool_args=tu.get("input") or {},
+                raw=raw,
+            )
+        return Action(kind="final", text=text, raw=raw)
+
+
+class OpenAIPolicy:  # pragma: no cover - deferred
+    """Deferred. The OpenAI tool-call/result shapes are documented in RESEARCH s3
+    (``tool_calls`` / ``role:tool``, ``tool_call_id``, args-as-JSON-string), but live OpenAI
+    support is not implemented or tested yet; raising is more honest than a silent stub."""
+
+    provider: Provider = "openai"
+
+    def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+        raise NotImplementedError(
+            "OpenAIPolicy is deferred; Anthropic is the implemented provider for Phase 0. "
+            "See RESEARCH/phase_0_foundations.md s3 for the message shapes to implement."
+        )
+
+
+class SyntheticCodec:
+    """Minimal message encoding for in-process synthetic policies (the ground-truth fixtures).
+
+    Not provider-native — it only needs to be internally consistent so the replay machinery can
+    be validated independently of any real provider's nondeterminism.
+    """
+
+    def user_message(self, text: str) -> dict[str, Any]:
+        return {"role": "user", "content": text}
+
+    def assistant_message(self, action: Action) -> dict[str, Any]:
+        return {
+            "role": "assistant",
+            "content": action.text,
+            "tool_call": (
+                None
+                if action.kind == "final"
+                else {"name": action.tool_name, "arguments": json.dumps(action.tool_args or {})}
+            ),
+        }
+
+    def tool_result_message(self, action: Action, observation: Observation) -> dict[str, Any]:
+        return {"role": "tool", "name": observation.tool_name, "content": observation.result}
+
+
+# --------------------------------------------------------------------------------------------
+# Provider factories (reconstruct a policy/codec from a recorded trajectory's provider)
+# --------------------------------------------------------------------------------------------
+def codec_for(provider: Provider) -> MessageCodec:
+    if provider == "anthropic":
+        return AnthropicCodec()
+    if provider == "synthetic":
+        return SyntheticCodec()
+    raise ReplayError(
+        f"no codec for provider {provider!r} (OpenAI is deferred; synthetic is in-process only)"
+    )
+
+
+def policy_for(provider: Provider, model: str) -> Policy:
+    if provider == "anthropic":
+        return AnthropicPolicy(model)
+    raise ReplayError(
+        f"cannot reconstruct a {provider!r} policy outside its fixture "
+        f"(synthetic policies are in-process; OpenAI is deferred)"
+    )
+
+
+# --------------------------------------------------------------------------------------------
+# Entry point
+# --------------------------------------------------------------------------------------------
+async def record_run(
+    *,
+    trajectory_id: str,
+    policy: Policy,
+    environment: Environment,
+    codec: MessageCodec,
+    system_prompt: str,
+    tool_schemas: list[dict[str, Any]],
+    user_input: str,
+    sampling: dict[str, Any] | None = None,
+    max_steps: int = 20,
+) -> Trajectory:
+    """Record one agent run faithfully into a ``Trajectory``."""
+    loop = ToolLoop(policy, environment, codec, max_steps=max_steps)
+    traj = await loop.run(
+        trajectory_id=trajectory_id,
+        system_prompt=system_prompt,
+        tool_schemas=tool_schemas,
+        user_input=user_input,
+        sampling=sampling,
+    )
+    log.info(
+        "recorded run",
+        trajectory_id=trajectory_id,
+        provider=policy.provider,
+        model=policy.model_id,
+        n_steps=len(traj.steps),
+    )
+    return traj

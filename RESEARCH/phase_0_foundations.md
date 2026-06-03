@@ -135,3 +135,45 @@ docs.anthropic.com (messages, tool-use, migration, errors) · cookbook.openai.co
 developers.openai.com (function-calling) · rr-project.org · pernos.co/about/overview · queue.acm.org/detail.cfm?id=3391621 ·
 pypi.org/project/{pydantic,numpy,scipy,anthropic,openai,typer,structlog,pytest,pytest-asyncio,hypothesis,ruff,mypy}.
 All accessed 2026-05-29.
+
+---
+
+## 5. Free / local models (added 2026-05-29) — Ollama + OpenAI-compatible backends
+
+Motivation: run + record agents at **zero cost**. Because the recorder is written against the
+`Policy` protocol, a free backend is just another policy.
+
+- **Ollama exposes an OpenAI-compatible endpoint** at `http://localhost:11434/v1` (mirrors
+  `/v1/chat/completions`); any code written for the `openai` SDK points at it with a one-line
+  `base_url` change. It supports **tool calling**, structured outputs, and streaming — *but
+  tool-call reliability is model-dependent*, so test with your specific model.
+  (docs.ollama.com/api/openai-compatibility; ollama.com/blog/{openai-compatibility,tool-support}.)
+- **Caveat (from a stalled research pass, partially verified):** the `/v1` endpoint reportedly
+  has tool-calling reliability issues *especially with streaming*; the **native `/api/chat`**
+  endpoint is considered more reliable. We use **non-streaming** calls, which avoids the worst of
+  it. If `/v1` tool calling proves flaky in practice, a native-`/api/chat` policy is the
+  documented fallback (deferred — its message shapes were not verified this pass).
+- **Determinism (a real upside for CAR):** Ollama supports `seed` and `temperature=0`. With a
+  fixed seed + `temperature=0` + **fixed `num_ctx`**, local output is reproducible — *much* more
+  so than hosted APIs (single local stream, batch size 1). The docs note slight residual
+  nondeterminism can still appear (e.g. Llama 3 between runs without a kernel restart), which
+  *confirms* the measure-and-report framing applies locally too — it's just a far higher floor.
+  Set `num_ctx` via the policy's `extra_body` passthrough: `sampling={"seed":0,"temperature":0,
+  "extra_body":{"options":{"num_ctx":4096}}}`.
+  (ollama/ollama issues #586, #4660, #5321; tspi.at/2025/08/10/ollamaparams.html.)
+- **Tool-capable small models** (good on a 16–32GB Mac): `llama3.1:8b`, `qwen2.5:7b`. Use a
+  recent Ollama (the installed 0.5.12 is early-2025; upgrade for best tool support).
+- **Free hosted OpenAI-compatible alternatives** (no local GPU): Groq free tier
+  (`https://api.groq.com/openai/v1`, supports tools), OpenRouter `:free` models. Same
+  `OpenAICompatiblePolicy`, different `base_url`/key.
+
+### → DECISION / IMPLICATION for CAR
+Implemented `OpenAICompatiblePolicy` + `OpenAICodec` (one impl covers Ollama, Groq, OpenRouter,
+vLLM, LM Studio). Validated end-to-end against a fake OpenAI-shaped client (no server/key/money):
+records tool-call→final faithfully, replays exactly under a deterministic backend. The local
+seeded path is the recommended **free** way to demo faithful replay; the hosted-provider
+nondeterminism story (s1) remains the headline scientific point.
+
+### Section 5 sources
+docs.ollama.com/api/openai-compatibility · ollama.com/blog/openai-compatibility · ollama.com/blog/tool-support ·
+github.com/ollama/ollama/issues/{586,4660,5321} · tspi.at/2025/08/10/ollamaparams.html. All accessed 2026-05-29.

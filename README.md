@@ -79,6 +79,27 @@ pip install causal-agent-replay     # not yet published
 uv sync --extra dev
 ```
 
+## Quickstart — free, no API key (local Ollama)
+
+CAR runs against any backend behind the `Policy` protocol, so you can record and replay agents
+with a **free local model** — no spend. [Ollama](https://ollama.com) exposes an OpenAI-compatible
+endpoint, so one policy covers it (and Groq / OpenRouter / vLLM / LM Studio too).
+
+```bash
+ollama serve &                 # start the local server
+ollama pull llama3.1:8b        # a tool-capable model (qwen2.5:7b also works)
+
+# record the support-agent demo against the local model, then replay it
+uv run python scripts/record.py --backend ollama --model llama3.1:8b
+uv run car replay support-injection-demo
+```
+
+Local seeded inference (`seed` + `temperature=0` + a fixed `num_ctx`) reproduces *far* more
+reliably than hosted APIs — a real advantage for faithful replay. Hosted providers stay
+supported (`--backend anthropic` with `ANTHROPIC_API_KEY`, or any OpenAI-compatible endpoint via
+`OPENAI_BASE_URL`), and their nondeterminism is measured and reported, not hidden. See
+[`RESEARCH/phase_0_foundations.md`](RESEARCH/phase_0_foundations.md).
+
 ## Intellectual lineage
 
 Pearl's do-calculus and SCMs · counterfactual credit assignment in RL (Mesnard et al.) · causal

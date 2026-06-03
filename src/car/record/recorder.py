@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -199,18 +200,163 @@ class AnthropicPolicy:
         return Action(kind="final", text=text, raw=raw)
 
 
-class OpenAIPolicy:  # pragma: no cover - deferred
-    """Deferred. The OpenAI tool-call/result shapes are documented in RESEARCH s3
-    (``tool_calls`` / ``role:tool``, ``tool_call_id``, args-as-JSON-string), but live OpenAI
-    support is not implemented or tested yet; raising is more honest than a silent stub."""
+# --------------------------------------------------------------------------------------------
+# OpenAI-compatible (covers Ollama, Groq, OpenRouter, vLLM, LM Studio, ... — same wire format)
+# --------------------------------------------------------------------------------------------
+class OpenAICodec:
+    """Lossless OpenAI-compatible message serialization (``tool_calls`` / ``role:tool``).
+
+    ``Action.raw`` holds the verbatim assistant message dump. We reconstruct the assistant turn
+    from its semantic fields (role/content/tool_calls) — robust across strict servers like
+    Ollama — and link tool results by ``tool_call_id`` (RESEARCH s3). Tool-call ``arguments`` is
+    a JSON-encoded STRING in this wire format and is preserved as such.
+    """
+
+    def user_message(self, text: str) -> dict[str, Any]:
+        return {"role": "user", "content": text}
+
+    def assistant_message(self, action: Action) -> dict[str, Any]:
+        raw = action.raw
+        msg: dict[str, Any] = {"role": "assistant", "content": raw.get("content")}
+        tool_calls = raw.get("tool_calls")
+        if tool_calls:
+            msg["tool_calls"] = tool_calls
+        return msg
+
+    def tool_result_message(self, action: Action, observation: Observation) -> dict[str, Any]:
+        return {
+            "role": "tool",
+            "tool_call_id": self._tool_call_id(action),
+            "content": observation.result,
+        }
+
+    @staticmethod
+    def _tool_call_id(action: Action) -> str:
+        for call in action.raw.get("tool_calls") or []:
+            cid = call.get("id") if isinstance(call, dict) else None
+            if isinstance(cid, str):
+                return cid
+        raise ReplayError("no tool_call with an id found in OpenAI action.raw")
+
+
+# Sampling params the OpenAI-compatible wire format accepts (Ollama maps seed/temperature/top_p
+# onto its native options; RESEARCH: local seeded inference is far more deterministic than hosted).
+_OPENAI_SAMPLING_KEYS = ("temperature", "top_p", "seed", "frequency_penalty", "presence_penalty")
+
+
+class OpenAICompatiblePolicy:
+    """Agent-under-test on any OpenAI-compatible endpoint, incl. local Ollama (free).
+
+    ``base_url`` selects the backend (e.g. ``http://localhost:11434/v1`` for Ollama,
+    ``https://api.groq.com/openai/v1`` for Groq). When omitted, the ``openai`` SDK reads
+    ``OPENAI_BASE_URL`` / ``OPENAI_API_KEY`` from the environment, which is also how replay
+    reconstructs the policy via :func:`policy_for`.
+    """
 
     provider: Provider = "openai"
 
-    def __init__(self, *_args: Any, **_kwargs: Any) -> None:
-        raise NotImplementedError(
-            "OpenAIPolicy is deferred; Anthropic is the implemented provider for Phase 0. "
-            "See RESEARCH/phase_0_foundations.md s3 for the message shapes to implement."
-        )
+    def __init__(
+        self,
+        model: str,
+        *,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        client: Any | None = None,
+        max_tokens: int = 1024,
+    ) -> None:
+        self._model = model
+        self._max_tokens = max_tokens
+        if client is None:
+            try:
+                from openai import AsyncOpenAI
+            except ImportError as exc:  # pragma: no cover - dependency is declared
+                raise ReplayError("openai SDK not installed") from exc
+            # api_key must be non-empty for the SDK even when the server ignores it (Ollama).
+            resolved_key = api_key or os.environ.get("OPENAI_API_KEY") or "not-needed"
+            client = AsyncOpenAI(base_url=base_url, api_key=resolved_key)
+        self._client = client
+
+    @property
+    def model_id(self) -> str:
+        return self._model
+
+    async def sample(self, state: State) -> Action:
+        kwargs: dict[str, Any] = {
+            "model": self._model,
+            "messages": [{"role": "system", "content": state.system_prompt}, *state.messages],
+            "max_tokens": int(state.sampling.get("max_tokens", self._max_tokens)),
+        }
+        if state.tool_schemas:
+            kwargs["tools"] = [_as_openai_tool(t) for t in state.tool_schemas]
+        for key in _OPENAI_SAMPLING_KEYS:
+            if key in state.sampling:
+                kwargs[key] = state.sampling[key]
+        # Passthrough for backend-native options, e.g. Ollama's {"options": {"num_ctx": N}} —
+        # fixing num_ctx is required for fully reproducible local output (RESEARCH s5).
+        if "extra_body" in state.sampling:
+            kwargs["extra_body"] = state.sampling["extra_body"]
+
+        response = await self._client.chat.completions.create(**kwargs)
+        message = response.choices[0].message
+        raw = message.model_dump()
+        return self._parse(raw)
+
+    @staticmethod
+    def _parse(raw: dict[str, Any]) -> Action:
+        text = raw.get("content")
+        tool_calls = raw.get("tool_calls") or []
+        if tool_calls:
+            if len(tool_calls) != 1:
+                raise ReplayError(
+                    f"expected exactly one tool_call, got {len(tool_calls)} "
+                    f"(parallel tool calls are a deferred v0 limitation)"
+                )
+            fn = tool_calls[0].get("function", {})
+            arguments = fn.get("arguments") or "{}"
+            try:
+                parsed_args = json.loads(arguments)
+            except json.JSONDecodeError as exc:
+                raise ReplayError(
+                    f"tool_call arguments were not valid JSON: {arguments!r}"
+                ) from exc
+            return Action(
+                kind="tool_call",
+                text=text,
+                tool_name=fn.get("name"),
+                tool_args=parsed_args,
+                raw=raw,
+            )
+        return Action(kind="final", text=text, raw=raw)
+
+
+def _as_openai_tool(schema: dict[str, Any]) -> dict[str, Any]:
+    """Accept either a bare {name, description, parameters/input_schema} or an already-wrapped
+    {type: function, function: {...}} tool schema, and emit the OpenAI ``tools`` shape."""
+    if schema.get("type") == "function" and "function" in schema:
+        return schema
+    params = schema.get("parameters") or schema.get("input_schema") or {"type": "object"}
+    return {
+        "type": "function",
+        "function": {
+            "name": schema["name"],
+            "description": schema.get("description", ""),
+            "parameters": params,
+        },
+    }
+
+
+def ollama_policy(model: str = "llama3.1:8b", *, max_tokens: int = 1024) -> OpenAICompatiblePolicy:
+    """Convenience: an OpenAI-compatible policy pointed at a local Ollama server (free).
+
+    Requires ``ollama serve`` running and ``ollama pull <model>``. Tool calling needs a
+    tool-capable model (e.g. llama3.1/3.2/3.3, qwen2.5) and a recent Ollama.
+    """
+    return OpenAICompatiblePolicy(
+        model,
+        base_url=os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
+        api_key="ollama",  # ignored by the server, required non-empty by the SDK
+        max_tokens=max_tokens,
+    )
 
 
 class SyntheticCodec:
@@ -244,19 +390,23 @@ class SyntheticCodec:
 def codec_for(provider: Provider) -> MessageCodec:
     if provider == "anthropic":
         return AnthropicCodec()
+    if provider == "openai":
+        return OpenAICodec()
     if provider == "synthetic":
         return SyntheticCodec()
-    raise ReplayError(
-        f"no codec for provider {provider!r} (OpenAI is deferred; synthetic is in-process only)"
-    )
+    raise ReplayError(f"no codec for provider {provider!r}")
 
 
 def policy_for(provider: Provider, model: str) -> Policy:
     if provider == "anthropic":
         return AnthropicPolicy(model)
+    if provider == "openai":
+        # base_url / api_key come from OPENAI_BASE_URL / OPENAI_API_KEY (set these to point at
+        # Ollama, Groq, etc. when replaying an OpenAI-compatible recording).
+        return OpenAICompatiblePolicy(model)
     raise ReplayError(
         f"cannot reconstruct a {provider!r} policy outside its fixture "
-        f"(synthetic policies are in-process; OpenAI is deferred)"
+        f"(synthetic policies are in-process)"
     )
 
 

@@ -147,6 +147,44 @@ class NoisyPolicy:
         return self._base[idx]
 
 
+class MultiNoisyPolicy:
+    """Independent stochastic choices at several steps — for the two-step-interaction SCM.
+
+    ``noisy`` maps a step index to (option_a, option_b, p): at that step, return option_a with
+    probability p, else option_b. Other steps fall back to ``base_actions`` (or a final action).
+    Draws are seeded per-draw so a whole attribution pass is reproducible.
+    """
+
+    provider: Provider = "synthetic"
+
+    def __init__(
+        self,
+        base_actions: list[Action],
+        noisy: dict[int, tuple[Action, Action, float]],
+        *,
+        seed: int = 0,
+    ) -> None:
+        self._base = base_actions
+        self._noisy = noisy
+        self._seed = seed
+        self._draws = 0
+
+    @property
+    def model_id(self) -> str:
+        return "synthetic:multinoisy"
+
+    async def sample(self, state: State) -> Action:
+        idx = _n_assistant_turns(state)
+        if idx in self._noisy:
+            option_a, option_b, p = self._noisy[idx]
+            rng = random.Random(self._seed * 1_000_003 + self._draws)
+            self._draws += 1
+            return option_a if rng.random() < p else option_b
+        if idx >= len(self._base):
+            return final("done")
+        return self._base[idx]
+
+
 class DictEnvironment:
     """Returns a fixed result per tool name; deterministic and side-effect-free."""
 

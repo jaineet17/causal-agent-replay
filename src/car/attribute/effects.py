@@ -83,6 +83,23 @@ class EffectEstimate(BaseModel):
         return self.ci_low > 0.0 or self.ci_high < 0.0
 
 
+def clt_interval(samples: Sequence[float], confidence: float = 0.95) -> tuple[float, float, float]:
+    """(mean, low, high) via the normal approximation — for i.i.d. Monte-Carlo samples.
+
+    Used for Shapley per-step marginal contributions, which are i.i.d. across permutations
+    (provided v(S) is NOT cached across permutations — see RESEARCH s3).
+    """
+    arr = np.asarray(samples, dtype=float)
+    if arr.size == 0:
+        return (0.0, 0.0, 0.0)
+    mean = float(arr.mean())
+    if arr.size < 2:
+        return (mean, mean, mean)
+    se = float(arr.std(ddof=1)) / np.sqrt(arr.size)
+    z = float(stats.norm.ppf(1.0 - (1.0 - confidence) / 2.0))
+    return (mean, mean - z * se, mean + z * se)
+
+
 def wilson_interval(k: int, n: int, confidence: float = 0.95) -> tuple[float, float, float]:
     """Wilson score interval for a binomial proportion. Returns (p_hat, low, high)."""
     if n == 0:

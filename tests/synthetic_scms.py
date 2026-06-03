@@ -17,7 +17,7 @@ from __future__ import annotations
 from car.outcome.functions import RuleOutcome, tool_called
 from car.schemas.trajectory import Outcome, Trajectory
 
-from .scm_fixtures import DictEnvironment, NoisyPolicy, final, tool_call
+from .scm_fixtures import DictEnvironment, MultiNoisyPolicy, NoisyPolicy, final, tool_call
 
 # --- shared actions ---------------------------------------------------------------------------
 LOOKUP = tool_call("lookup_order", {"order_id": "A"}, text="looking up")
@@ -86,3 +86,16 @@ GOOD_B = tool_call("good_b", {}, text="b-good")
 # outcome is bad only when BOTH are bad.
 INTERACTION_OBSERVED = [BAD_A, BAD_B, final("Done.")]
 INTERACTION_STEPS = (0, 1)
+
+
+def interaction_policy(q: float = 0.3, seed: int = 0) -> MultiNoisyPolicy:
+    """At step 0 choose BAD_A w.p. q (else GOOD_A); at step 1 choose BAD_B w.p. q (else GOOD_B).
+
+    The outcome is bad only if BOTH bad — a synergistic AND-interaction. Single-step contrastive
+    under-/double-counts each step; Shapley splits credit ~0.5/0.5.
+    """
+    return MultiNoisyPolicy(
+        base_actions=INTERACTION_OBSERVED,
+        noisy={0: (BAD_A, GOOD_A, q), 1: (BAD_B, GOOD_B, q)},
+        seed=seed,
+    )

@@ -87,3 +87,35 @@ the model writes a perfectly polite confirmation — the failure is invisible in
 but the *decision* that caused it is now isolable. All five `do(·)` kinds (`do_resample`,
 `do_action`, `do_observation`, `do_context`, `do_policy`) are validated against synthetic SCMs
 with known structure in `tests/test_intervention.py`; this shows one running on a real free model.
+
+---
+
+## 3. Attribution validated against ground truth (Phase 3)
+
+The credibility of the whole project rests on checking attribution against SCMs where we *know*
+the answer (PLAN.md §7/§13). Two checks, both green:
+
+**Contrastive recovers the pivotal step.** On a 3-step agent whose step 1 is the pivotal decision
+(refund→bad with some probability, else escalate→good), `contrastive_attribution` resamples each
+step K times and identifies the causal locus as the **last** step whose resampling still rescues
+the run (handling the run-forward confound that an *earlier* step also shows an effect by
+re-rolling step 1). Result: `causal_locus == 1`. ✓
+
+**Shapley recovers the two-step interaction.** On an agent whose outcome is bad *only if BOTH*
+step 0 and step 1 go wrong (an AND-failure), single-step contrastive can't express shared
+responsibility — but budget-bounded Monte-Carlo Shapley splits the credit, with CLT confidence
+intervals:
+
+```
+shapley step 0: phi=+0.439  CI=[+0.415, +0.463]  significant
+shapley step 1: phi=+0.448  CI=[+0.426, +0.470]  significant
+shapley step 2: phi=+0.022  CI=[-0.000, +0.045]  not significant  (the inert final step)
+efficiency_sum = 0.909   (theory: 1 - q^2 = 0.91)
+```
+
+The two interacting steps each get ~0.45 (theory: 0.455), the inert step ~0, and the values
+sum to v(N)−v(∅) as the Shapley efficiency axiom requires. Contrastive on the same run collapses
+the joint cause to a single locus and *over*-counts (its single-step effects sum to >1.2 vs the
+true total contribution of 0.91) — the concrete reason `shapley.py` ships alongside
+`contrastive.py`. A heatmap that hasn't been checked this way is exactly the failure mode that
+makes attribution tools untrustworthy; these checks are in `tests/test_attribution.py`.

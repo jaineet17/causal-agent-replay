@@ -104,6 +104,79 @@ async def run_forward(
     )
 
 
+async def coalition_forward(
+    *,
+    trajectory_id: str,
+    factual: Trajectory,
+    held: set[int],
+    policy: Policy,
+    environment: Environment,
+    codec: MessageCodec,
+    max_steps: int | None = None,
+    intervention_id: str = "coalition",
+) -> Trajectory:
+    """Run forward holding steps in ``held`` at their FACTUAL actions; resample the rest.
+
+    This generalizes ``do_resample`` to an arbitrary subset (the Shapley coalition primitive):
+      - ``held = {0..k-1}`` reproduces contrastive ``do_resample(k)`` (resample k onward);
+      - ``held = all steps`` reproduces the factual trajectory exactly (v(N));
+      - ``held = {}`` resamples everything (the baseline v(empty)).
+
+    Holding step k means do(a_k = factual a_k) even if the (resampled) context at k differs — the
+    Shapley value of a step is the contribution of *fixing that decision to what actually
+    happened*. Observations follow from the live environment.
+    """
+    n = len(factual.steps)
+    if max_steps is None:
+        max_steps = n + 5
+    s0 = factual.steps[0].state_before
+    messages: list[dict[str, Any]] = [copy.deepcopy(s0.messages[0])]
+    steps: list[Step] = []
+    final_output: str | None = None
+
+    for index in range(max_steps):
+        state = State(
+            system_prompt=s0.system_prompt,
+            tool_schemas=s0.tool_schemas,
+            model=policy.model_id,
+            provider=policy.provider,
+            sampling=s0.sampling,
+            messages=copy.deepcopy(messages),
+        )
+        if index in held and index < n:
+            action = factual.steps[index].action  # do(a = factual)
+        else:
+            action = await policy.sample(state)
+
+        if action.kind == "final":
+            steps.append(Step(index=index, state_before=state, action=action, observation=None))
+            final_output = action.text or ""
+            break
+        if action.tool_name is None:
+            raise ReplayError(f"coalition step {index}: tool_call action has no tool_name")
+        observation = await environment.observe(action)
+        steps.append(Step(index=index, state_before=state, action=action, observation=observation))
+        messages.append(codec.assistant_message(action))
+        messages.append(codec.tool_result_message(action, observation))
+    else:
+        raise ReplayError(
+            f"coalition_forward {trajectory_id!r} exceeded max_steps={max_steps} without a final"
+        )
+
+    if final_output is None:  # pragma: no cover - the break always sets it
+        raise ReplayError(f"coalition_forward {trajectory_id!r} ended without a final output")
+
+    resampled = [i for i in range(n) if i not in held]
+    return Trajectory(
+        trajectory_id=trajectory_id,
+        parent_id=factual.trajectory_id,
+        branched_at_step=resampled[0] if resampled else 0,
+        intervention_id=intervention_id,
+        steps=steps,
+        final_output=final_output,
+    )
+
+
 async def _continue_loop(
     *,
     steps: list[Step],

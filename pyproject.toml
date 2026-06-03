@@ -43,8 +43,8 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/jaineet/causal-agent-replay"
-Repository = "https://github.com/jaineet/causal-agent-replay"
+Homepage = "https://github.com/jaineet17/causal-agent-replay"
+Repository = "https://github.com/jaineet17/causal-agent-replay"
 
 [project.scripts]
 car = "car.cli:app"

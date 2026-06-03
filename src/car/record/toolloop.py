@@ -13,7 +13,7 @@ agent and an in-process synthetic policy with known causal structure, with no co
 from __future__ import annotations
 
 import copy
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from car.schemas.scm import Environment, Policy, ReplayError
 from car.schemas.trajectory import Action, Observation, State, Step, Trajectory
@@ -39,6 +39,22 @@ class MessageCodec(Protocol):
 
     def tool_result_message(self, action: Action, observation: Observation) -> dict[str, Any]:
         """Serialize a tool result, linked to ``action``'s tool call by the provider's id field."""
+        ...
+
+    def forge_action(
+        self,
+        *,
+        kind: Literal["tool_call", "final"],
+        text: str | None,
+        tool_name: str | None,
+        tool_args: dict[str, Any] | None,
+    ) -> Action:
+        """Build an ``Action`` with a provider-faithful ``raw`` for a FORCED action (do_action).
+
+        A forced action has no recorded provider response, so the codec synthesizes one that its
+        own ``assistant_message`` / ``tool_result_message`` can thread back into history (e.g. an
+        Anthropic ``tool_use`` block with an id, or an OpenAI ``tool_calls`` entry).
+        """
         ...
 
 

@@ -13,6 +13,7 @@ attribution validation) build on these primitives.
 from __future__ import annotations
 
 import random
+from collections.abc import Callable
 from typing import Any
 
 from car.schemas.scm import Environment
@@ -22,6 +23,27 @@ from car.schemas.trajectory import Action, Observation, Provider, State
 def _n_assistant_turns(state: State) -> int:
     """Step index = how many assistant turns have already happened in the recorded context."""
     return sum(1 for m in state.messages if m.get("role") == "assistant")
+
+
+def turn_index(state: State) -> int:
+    """Public alias: which step (0-based) the policy is deciding now."""
+    return _n_assistant_turns(state)
+
+
+def user_text(state: State) -> str:
+    """The first user message's text (the demos use a string initial message)."""
+    for m in state.messages:
+        if m.get("role") == "user" and isinstance(m.get("content"), str):
+            return str(m["content"])
+    return ""
+
+
+def last_tool_result(state: State) -> str:
+    """The most recent tool observation visible in the context (SyntheticCodec encoding)."""
+    for m in reversed(state.messages):
+        if m.get("role") == "tool" and isinstance(m.get("content"), str):
+            return str(m["content"])
+    return ""
 
 
 def tool_call(name: str, args: dict[str, Any], text: str | None = None) -> Action:
@@ -56,6 +78,28 @@ class ScriptedPolicy:
         if idx >= len(self._actions):
             return final("done")
         return self._actions[idx]
+
+
+class RulePolicy:
+    """A deterministic policy whose action is an arbitrary function of the current state.
+
+    Lets a test build a synthetic agent with KNOWN causal dependence — e.g. "step 1's action
+    depends on step 0's observation" or "step 0's action depends on the user message" — so an
+    intervention's downstream effect can be asserted against ground truth.
+    """
+
+    provider: Provider = "synthetic"
+
+    def __init__(self, decide: Callable[[State], Action], model_id: str = "synthetic:rule") -> None:
+        self._decide = decide
+        self._model_id = model_id
+
+    @property
+    def model_id(self) -> str:
+        return self._model_id
+
+    async def sample(self, state: State) -> Action:
+        return self._decide(state)
 
 
 class NoisyPolicy:

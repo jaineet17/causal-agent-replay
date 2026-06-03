@@ -19,7 +19,7 @@ import inspect
 import json
 import os
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Literal
 
 import structlog
 
@@ -126,6 +126,35 @@ class AnthropicCodec:
                 if isinstance(tid, str):
                     return tid
         raise ReplayError("no tool_use block with an id found in Anthropic action.raw")
+
+    def forge_action(
+        self,
+        *,
+        kind: Literal["tool_call", "final"],
+        text: str | None,
+        tool_name: str | None,
+        tool_args: dict[str, Any] | None,
+    ) -> Action:
+        content: list[dict[str, Any]] = []
+        if text:
+            content.append({"type": "text", "text": text})
+        if kind == "tool_call":
+            if tool_name is None:
+                raise ReplayError("forge_action(tool_call) requires tool_name")
+            content.append(
+                {
+                    "type": "tool_use",
+                    "id": "toolu_forced",
+                    "name": tool_name,
+                    "input": tool_args or {},
+                }
+            )
+        raw = {
+            "role": "assistant",
+            "content": content,
+            "stop_reason": ("tool_use" if kind == "tool_call" else "end_turn"),
+        }
+        return Action(kind=kind, text=text, tool_name=tool_name, tool_args=tool_args, raw=raw)
 
 
 class AnthropicPolicy:
@@ -237,6 +266,27 @@ class OpenAICodec:
             if isinstance(cid, str):
                 return cid
         raise ReplayError("no tool_call with an id found in OpenAI action.raw")
+
+    def forge_action(
+        self,
+        *,
+        kind: Literal["tool_call", "final"],
+        text: str | None,
+        tool_name: str | None,
+        tool_args: dict[str, Any] | None,
+    ) -> Action:
+        raw: dict[str, Any] = {"role": "assistant", "content": text}
+        if kind == "tool_call":
+            if tool_name is None:
+                raise ReplayError("forge_action(tool_call) requires tool_name")
+            raw["tool_calls"] = [
+                {
+                    "id": "call_forced",
+                    "type": "function",
+                    "function": {"name": tool_name, "arguments": json.dumps(tool_args or {})},
+                }
+            ]
+        return Action(kind=kind, text=text, tool_name=tool_name, tool_args=tool_args, raw=raw)
 
 
 # Sampling params the OpenAI-compatible wire format accepts (Ollama maps seed/temperature/top_p
@@ -382,6 +432,23 @@ class SyntheticCodec:
 
     def tool_result_message(self, action: Action, observation: Observation) -> dict[str, Any]:
         return {"role": "tool", "name": observation.tool_name, "content": observation.result}
+
+    def forge_action(
+        self,
+        *,
+        kind: Literal["tool_call", "final"],
+        text: str | None,
+        tool_name: str | None,
+        tool_args: dict[str, Any] | None,
+    ) -> Action:
+        # SyntheticCodec threads from action fields, so raw can be minimal.
+        return Action(
+            kind=kind,
+            text=text,
+            tool_name=tool_name,
+            tool_args=tool_args,
+            raw={"synthetic": True, "forced": True},
+        )
 
 
 # --------------------------------------------------------------------------------------------

@@ -48,16 +48,30 @@ but persists when you resample `k+1` — then `k` is where the agent committed t
 | `do_context` | edit the message history at `k` | *what if the prompt hadn't contained X?* |
 | `do_policy` | swap the model from `k` forward | *did the model upgrade break it?* |
 
+## See it
+
+```bash
+uv sync --extra dev
+uv run python scripts/make_demo.py     # -> examples/demo_report.html  (open it)
+```
+
+The demo report attributes a support agent that absorbed a prompt injection. It shows the
+**causal locus is the decision step** — resampling it avoids the bad refund ~half the time,
+resampling the already-committed steps never does — with the injection visible in the exact
+context that step decided from, an attribution chart with confidence intervals, and a Shapley
+toggle. (`docs/writeup.md` explains the method; `examples/gallery.md` runs the engine on a live
+local model.)
+
 ## Status
 
-Early. Built in phases (see `PLAN.md`); each phase is research-gated and has a binary
-done-condition.
+Built in phases (see `PLAN.md`); each phase is research-gated with a binary done-condition.
+Phases 0–4 are complete and validated against synthetic SCMs with known ground truth.
 
-- **Phase 0 — faithful recording + deterministic replay.** ← in progress
-- Phase 1 — intervention algebra + forward replay
-- Phase 2 — distributional outcomes + effect estimators (with confidence intervals)
-- Phase 3 — causal attribution (contrastive, then budget-bounded Monte-Carlo Shapley)
-- Phase 4 — interactive visualization + technical writeup
+- **Phase 0 — faithful recording + deterministic replay.** ✅
+- **Phase 1 — intervention algebra + forward replay.** ✅
+- **Phase 2 — distributional outcomes + effect estimators (with confidence intervals).** ✅
+- **Phase 3 — causal attribution (contrastive + budget-bounded Monte-Carlo Shapley).** ✅
+- **Phase 4 — interactive visualization + technical writeup.** ✅
 
 ## Why this is honest about hard things
 

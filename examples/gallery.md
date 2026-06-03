@@ -1,8 +1,20 @@
 # Example gallery
 
-Worked examples that demonstrate CAR on real runs. As later phases land, this will grow to
-include intervention trees and attribution heatmaps; for now it shows the Phase 0 foundation —
-faithful recording and deterministic replay — on a **free, local model**.
+Worked examples that demonstrate CAR end to end: faithful recording/replay on a **free local
+model**, a live counterfactual intervention, and attribution validated against ground truth.
+
+## 0. The interactive demo report
+
+```bash
+uv run python scripts/make_demo.py     # -> examples/demo_report.html  (open it in a browser)
+```
+
+A self-contained interactive HTML for a support agent that absorbed a prompt injection. It shows
+the **causal locus is the decision step** — the trajectory trunk gives the green/red outcome
+distribution when each step is resampled (the "point of commitment" is where the green share
+collapses), the attribution panel shows per-step effect with confidence intervals (toggle
+contrastive ⇄ Shapley), and clicking the locus reveals the exact context it decided from — with
+the injection in plain sight. `docs/writeup.md` explains the method.
 
 ---
 

@@ -1,3 +1,7 @@
+---
+title: "Causal Agent Replay — technical writeup"
+---
+
 # Causal Agent Replay: counterfactual attribution for LLM-agent failures
 
 *A technical writeup. Companion to the `causal-agent-replay` package.*

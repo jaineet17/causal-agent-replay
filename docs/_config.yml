@@ -1,0 +1,4 @@
+title: Causal Agent Replay
+description: "Counterfactual replay and causal attribution over LLM-agent trajectories — find which step actually caused a failure by intervening on it."
+theme: jekyll-theme-cayman
+show_downloads: false

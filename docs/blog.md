@@ -1,3 +1,7 @@
+---
+title: "Which step made your agent fail?"
+---
+
 # Which step made your agent fail? Prove it by counterfactual.
 
 Your LLM agent issued a refund it shouldn't have. You have the full trace. **Which step actually

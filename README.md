@@ -50,6 +50,8 @@ but persists when you resample `k+1` — then `k` is where the agent committed t
 
 ## See it
 
+![Attribution report: the causal locus is the decision step, with confidence intervals and the injection visible in context.](docs/assets/demo.png)
+
 ```bash
 uv sync --extra dev
 uv run python scripts/make_demo.py     # -> examples/demo_report.html  (open it)

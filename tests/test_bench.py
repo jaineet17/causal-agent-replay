@@ -135,8 +135,8 @@ async def test_no_locus_when_nothing_rescues() -> None:
 
     result = await attribute_log(_instance(), HopelessWorld(), k_max=8, chunk=4)
     assert result.locus is None
-    assert result.predicted_agent is None
-    assert not result.agent_correct
+    assert not result.prediction_confident  # fallback prediction, flagged as such
+    assert result.predicted_step is not None  # benchmarks expect a prediction on every instance
 
 
 def test_normalize_answer() -> None:

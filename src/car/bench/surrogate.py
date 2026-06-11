@@ -90,9 +90,16 @@ def _transcript(steps: list[LogStep], *, last: int | None = None) -> str:
 class LLMWorldModel:
     """The default LogWorldModel over a single ChatFn (separate prompts per role)."""
 
-    def __init__(self, chat: ChatFn, *, judge_chat: ChatFn | None = None) -> None:
+    def __init__(
+        self,
+        chat: ChatFn,
+        *,
+        judge_chat: ChatFn | None = None,
+        ground_env_with_gt: bool = True,
+    ) -> None:
         self._chat = chat
         self._judge_chat = judge_chat or chat
+        self._ground_env_with_gt = ground_env_with_gt
 
     async def next_message(
         self, instance: WhoWhenInstance, prefix: list[LogStep], speaker: str
@@ -113,10 +120,26 @@ class LLMWorldModel:
     async def env_message(
         self, instance: WhoWhenInstance, prefix: list[LogStep], speaker: str
     ) -> str:
+        """Simulate environment output. Pilot finding (2026-06-11): the logs are partially
+        observable (the underlying data — files, pages — is absent), so an ungrounded simulator
+        can NEVER produce the true result and nothing rescues. In the w/-GT setting we ground the
+        simulator in the true answer (the ToolEmu pattern under partial observability): it may
+        emit the correct value ONLY when the preceding agent action would plausibly compute it.
+        Disclosed in reporting as GT-grounded environment simulation."""
+        grounding = ""
+        if self._ground_env_with_gt and instance.ground_truth.strip():
+            grounding = (
+                f"\n\nGROUND FACT about the true world (for consistency only; NEVER volunteer "
+                f"it unprompted): a fully correct solution to the task yields "
+                f"{instance.ground_truth.strip()!r}. If the preceding agent action would "
+                f"plausibly compute the correct result, your output reflects that value; if the "
+                f"action is flawed or computes something else, output what IT would actually "
+                f"produce instead."
+            )
         system = (
             f"You simulate the output of {speaker} (an execution environment / terminal / user). "
             "Given the conversation, produce ONLY the realistic raw output it would return "
-            "(e.g. exit codes, code output, file contents). No commentary."
+            f"(e.g. exit codes, code output, file contents). No commentary.{grounding}"
         )
         user = (
             f"TASK CONTEXT:\n{instance.question[:1200]}\n\nCONVERSATION SO FAR:\n"

@@ -60,6 +60,10 @@ class LogAttribution(BaseModel):
     locus: int | None
     predicted_agent: str | None
     predicted_step: int | None
+    prediction_confident: bool = Field(
+        description="True when the prediction is the CI-gated locus; False when it fell back to "
+        "the argmax-rescue step (benchmarks expect a prediction on every instance)."
+    )
     label_agent: str
     label_step: int
     total_rollouts: int
@@ -156,7 +160,16 @@ async def attribute_log(
     for se in per_step:
         if se.rescues and not se.is_env:  # the benchmark labels AGENT mistakes
             locus = se.index
-    predicted_agent = instance.history[locus].agent if locus is not None else None
+
+    # The benchmark expects a prediction on every instance: when no step clears the CI gate,
+    # fall back to the agent step with the largest rescue point-estimate (flagged unconfident).
+    predicted_step = locus
+    confident = locus is not None
+    if predicted_step is None:
+        agent_steps = [se for se in per_step if not se.is_env]
+        if agent_steps:
+            predicted_step = min(agent_steps, key=lambda se: se.effect.point).index
+    predicted_agent = instance.history[predicted_step].agent if predicted_step is not None else None
 
     result = LogAttribution(
         instance_id=instance.instance_id,
@@ -164,7 +177,8 @@ async def attribute_log(
         per_step=per_step,
         locus=locus,
         predicted_agent=predicted_agent,
-        predicted_step=locus,
+        predicted_step=predicted_step,
+        prediction_confident=confident,
         label_agent=instance.mistake_agent,
         label_step=instance.mistake_step,
         total_rollouts=total,

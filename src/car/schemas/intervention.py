@@ -78,7 +78,9 @@ class DoPolicy(_Base):
 
     kind: Literal["do_policy"] = "do_policy"
     new_model: str
-    new_provider: Literal["anthropic", "openai", "synthetic", "langchain"] | None = None
+    new_provider: (
+        Literal["anthropic", "openai", "synthetic", "langchain", "openai-agents"] | None
+    ) = None
     new_sampling: dict[str, Any] | None = None
 
 

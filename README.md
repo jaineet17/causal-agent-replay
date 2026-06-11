@@ -74,24 +74,31 @@ Phases 0–4 are complete and validated against synthetic SCMs with known ground
 - **Phase 2 — distributional outcomes + effect estimators (with confidence intervals).** ✅
 - **Phase 3 — causal attribution (contrastive + budget-bounded Monte-Carlo Shapley).** ✅
 - **Phase 4 — interactive visualization + technical writeup.** ✅
-- **Phase 5 — framework adapters: LangGraph/LangChain `create_agent`.** ✅ (OpenAI Agents SDK next)
+- **Phase 5 — framework adapters: LangGraph/LangChain + OpenAI Agents SDK.** ✅
 
-## Record *your* agent (LangGraph / LangChain 1.x)
+Record *your* agent and attribute its failures — same one-line wrap on either framework:
 
-```bash
-pip install 'causal-agent-replay[langgraph]'
-```
+| framework | extra | wrap |
+|---|---|---|
+| LangGraph / LangChain 1.x | `causal-agent-replay[langgraph]` | `create_agent(..., middleware=[LangGraphRecorder()])` |
+| OpenAI Agents SDK | `causal-agent-replay[openai-agents]` | `Agent(..., model=OpenAIAgentsRecorder(model))` |
+
+Both produce a CAR `Trajectory` held to the same `verify_reconstruction` faithfulness invariant
+as the native recorder; counterfactual replay and attribution then run through the unchanged
+core, re-executing *your* tools live on the branches.
+
+### Example: LangGraph / LangChain 1.x
 
 ```python
 from langchain.agents import create_agent
 from car.adapters.langgraph import LangGraphRecorder, LangChainPolicy, LangChainToolEnvironment
+from car.record.recorder import codec_for
 
 recorder = LangGraphRecorder()                      # an AgentMiddleware
 agent = create_agent(model, tools, system_prompt=..., middleware=[recorder])
 await agent.ainvoke({"messages": [HumanMessage("...")]})
 
-trajectory = recorder.trajectory("my-run")          # a CAR trajectory, held to the same
-                                                    # faithfulness invariant as the native recorder
+trajectory = recorder.trajectory("my-run")
 result = await contrastive_attribution(
     trajectory,
     policy=LangChainPolicy(model),                  # resample YOUR model
@@ -102,9 +109,10 @@ result = await contrastive_attribution(
 print(result.causal_locus)
 ```
 
-Scope (v1, refused loudly rather than mis-recorded): `create_agent`-shaped tool loops, one tool
-call per turn (`disable_parallel_tool_calls()` is provided), string-returning tools. See
-`RESEARCH/phase_5_adapters.md` for the faithfulness analysis.
+The OpenAI Agents SDK adapter is identical in shape (`OpenAIAgentsRecorder(model)` as the agent's
+`model`, then `OpenAIAgentsPolicy` / `OpenAIAgentsToolEnvironment`). Scope for both (v1, refused
+loudly rather than mis-recorded): single-agent tool loops, one tool call per turn, string-returning
+tools. See `RESEARCH/phase_5_adapters.md` for the faithfulness analysis.
 
 ## Why this is honest about hard things
 

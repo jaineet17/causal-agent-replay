@@ -5,6 +5,9 @@ adapter instead instruments someone else's loop — faithfulness has to be *chec
 every adapter routes its recordings through the same ``DeterministicReplay.verify_reconstruction``
 invariant the native path is held to.
 
-Available: ``car.adapters.langgraph`` (LangChain ``create_agent`` / LangGraph; requires the
-``causal-agent-replay[langgraph]`` extra). Planned: OpenAI Agents SDK (PLAN.md s12).
+Available:
+  - ``car.adapters.langgraph`` — LangChain ``create_agent`` / LangGraph
+    (``causal-agent-replay[langgraph]``);
+  - ``car.adapters.openai_agents`` — the OpenAI Agents SDK
+    (``causal-agent-replay[openai-agents]``).
 """

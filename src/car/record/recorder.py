@@ -306,6 +306,60 @@ class LangChainProjectionCodec(OpenAICodec):
         }
 
 
+class OpenAIAgentsCodec:
+    """Responses-API item serialization for the OpenAI Agents SDK adapter.
+
+    The Agents SDK threads context as Responses-API *input items*, not chat messages: a tool call
+    is a ``function_call`` item and its result a ``function_call_output`` item, linked by
+    ``call_id`` (not ``tool_call_id``). ``Action.raw`` holds the verbatim ``function_call`` item.
+    Lives in core (pure dict shaping) so ``codec_for("openai-agents")`` needs no SDK import.
+    """
+
+    def user_message(self, text: str) -> dict[str, Any]:
+        return {"role": "user", "content": text}
+
+    def assistant_message(self, action: Action) -> dict[str, Any]:
+        if action.kind == "final":
+            return {"role": "assistant", "content": action.text or ""}
+        return dict(action.raw)  # the verbatim function_call item
+
+    def tool_result_message(self, action: Action, observation: Observation) -> dict[str, Any]:
+        return {
+            "type": "function_call_output",
+            "call_id": self._call_id(action),
+            "output": observation.result,
+        }
+
+    @staticmethod
+    def _call_id(action: Action) -> str:
+        cid = action.raw.get("call_id")
+        if isinstance(cid, str):
+            return cid
+        raise ReplayError("no call_id found in openai-agents action.raw")
+
+    def forge_action(
+        self,
+        *,
+        kind: Literal["tool_call", "final"],
+        text: str | None,
+        tool_name: str | None,
+        tool_args: dict[str, Any] | None,
+    ) -> Action:
+        if kind == "final":
+            return Action(kind="final", text=text, raw={"role": "assistant", "content": text or ""})
+        if tool_name is None:
+            raise ReplayError("forge_action(tool_call) requires tool_name")
+        raw = {
+            "type": "function_call",
+            "call_id": "call_forced",
+            "name": tool_name,
+            "arguments": json.dumps(tool_args or {}),
+        }
+        return Action(
+            kind="tool_call", text=text, tool_name=tool_name, tool_args=tool_args, raw=raw
+        )
+
+
 # Sampling params the OpenAI-compatible wire format accepts (Ollama maps seed/temperature/top_p
 # onto its native options; RESEARCH: local seeded inference is far more deterministic than hosted).
 _OPENAI_SAMPLING_KEYS = ("temperature", "top_p", "seed", "frequency_penalty", "presence_penalty")
@@ -480,6 +534,8 @@ def codec_for(provider: Provider) -> MessageCodec:
         # LangGraph-adapter trajectories store messages via LangChain's OpenAI projection,
         # which adds "name" on tool messages (RESEARCH phase_5).
         return LangChainProjectionCodec()
+    if provider == "openai-agents":
+        return OpenAIAgentsCodec()
     if provider == "synthetic":
         return SyntheticCodec()
     raise ReplayError(f"no codec for provider {provider!r}")
@@ -497,6 +553,11 @@ def policy_for(provider: Provider, model: str) -> Policy:
             "a 'langchain' trajectory replays against the caller's chat-model object, which "
             "cannot be reconstructed from a model-id string — construct "
             "car.adapters.langgraph.LangChainPolicy(your_model) and pass it explicitly"
+        )
+    if provider == "openai-agents":
+        raise ReplayError(
+            "an 'openai-agents' trajectory replays against the caller's Model object — construct "
+            "car.adapters.openai_agents.OpenAIAgentsPolicy(your_model, tools=...) and pass it in"
         )
     raise ReplayError(
         f"cannot reconstruct a {provider!r} policy outside its fixture "

@@ -26,7 +26,10 @@ from pydantic import BaseModel, ConfigDict, Field
 # the OpenAI-projected wire format (the public, id-preserving projection — RESEARCH phase_5), and
 # the policy is a LangChain chat-model object supplied by the caller, not reconstructable from a
 # model-id string.
-Provider = Literal["anthropic", "openai", "synthetic", "langchain"]
+# "openai-agents" marks trajectories recorded through the OpenAI Agents SDK adapter: messages are
+# stored as Responses-API input items (function_call / function_call_output, linked by call_id),
+# and the policy wraps the caller's Model object.
+Provider = Literal["anthropic", "openai", "synthetic", "langchain", "openai-agents"]
 
 
 def _canonical_digest(payload: Any) -> str:

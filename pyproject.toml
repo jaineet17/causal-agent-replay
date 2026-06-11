@@ -1,6 +1,6 @@
 [project]
 name = "causal-agent-replay"
-version = "0.0.1"
+version = "0.1.0"
 description = "Counterfactual replay and causal attribution over LLM-agent trajectories: find which step actually caused a bad outcome by intervening on it."
 readme = "README.md"
 requires-python = ">=3.12"

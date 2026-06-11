@@ -1,5 +1,8 @@
 # causal-agent-replay
 
+[![ci](https://github.com/jaineet17/causal-agent-replay/actions/workflows/ci.yml/badge.svg)](https://github.com/jaineet17/causal-agent-replay/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/causal-agent-replay)](https://pypi.org/project/causal-agent-replay/)
+
 **Find which step actually caused your agent to fail — by intervening on it and measuring whether the outcome changes.**
 
 When an LLM agent does something wrong — issues a refund it shouldn't have, calls the wrong

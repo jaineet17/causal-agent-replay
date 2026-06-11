@@ -15,6 +15,7 @@ fidelity gap is reported, never hidden (see the validity-threats section of the 
 from __future__ import annotations
 
 import os
+import re
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import structlog
@@ -44,8 +45,12 @@ class LogWorldModel(Protocol):
     async def still_fails(self, instance: WhoWhenInstance, transcript: list[LogStep]) -> bool: ...
 
 
-def ollama_chat(model: str) -> ChatFn:
-    """A ChatFn against any OpenAI-compatible endpoint (default: local Ollama — free)."""
+def ollama_chat(model: str, *, temperature: float = 0.9, max_tokens: int = 700) -> ChatFn:
+    """A ChatFn against any OpenAI-compatible endpoint (default: local Ollama — free).
+
+    The surrogate default is hot (resampling needs stochasticity); pass ``temperature=0`` for
+    the judge/extraction role, which must be as deterministic as the backend allows.
+    """
     from openai import AsyncOpenAI
 
     client = AsyncOpenAI(
@@ -57,12 +62,24 @@ def ollama_chat(model: str) -> ChatFn:
         response = await client.chat.completions.create(
             model=model,
             messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-            temperature=0.9,  # the surrogate must be STOCHASTIC: resampling needs variation
-            max_tokens=700,
+            temperature=temperature,
+            max_tokens=max_tokens,
         )
         return response.choices[0].message.content or ""
 
     return chat
+
+
+def normalize_answer(text: str) -> str:
+    """Normalize an answer for comparison: case/whitespace/punctuation-insensitive,
+    numeric-aware ('8', '8.0', ' 8 ' all match)."""
+    s = text.strip().strip(".:,;!\"'()[]").strip().lower()
+    s = re.sub(r"\s+", " ", s)
+    try:
+        f = float(s.replace(",", ""))
+        return str(int(f)) if f == int(f) else str(f)
+    except ValueError:
+        return s
 
 
 def _transcript(steps: list[LogStep], *, last: int | None = None) -> str:
@@ -108,23 +125,26 @@ class LLMWorldModel:
         return (await self._chat(system, user)).strip()
 
     async def still_fails(self, instance: WhoWhenInstance, transcript: list[LogStep]) -> bool:
-        """w/-GT outcome label: does the continuation reach the known-correct answer?"""
-        gt = instance.ground_truth.strip()
-        # Cheap deterministic pass first: the GT answer literally appearing in the tail is a
-        # strong success signal for GAIA-style short answers.
-        tail_text = " ".join(s.content for s in transcript[-4:])
-        if gt and len(gt) >= 2 and gt.lower() in tail_text.lower():
-            return False  # reached the right answer -> no longer fails
+        """w/-GT outcome label: does the continuation reach the known-correct answer?
+
+        Pilot finding (2026-06-11): asking a small judge to *compare* answers is unreliable —
+        it graded factual failing logs as solved, breaking the sanity floor. So the LLM does
+        only the easy part (EXTRACT the final answer verbatim) and the comparison happens in
+        code against the normalized ground truth.
+        """
         system = (
-            "You grade a multi-agent transcript. Answer with exactly one word: SOLVED if the "
-            "agents' final answer matches the reference answer, FAILED otherwise."
+            "You read the end of a multi-agent transcript. Reply with ONLY the final answer "
+            "the agents committed to for the task (the value itself, no sentence, no units "
+            "unless part of the answer). If they never stated a final answer, reply NONE."
         )
         user = (
-            f"QUESTION:\n{instance.question[:1500]}\n\nREFERENCE ANSWER:\n{gt}\n\n"
-            f"TRANSCRIPT END:\n{_transcript(transcript, last=6)}\n\nOne word (SOLVED/FAILED):"
+            f"TASK:\n{instance.question[:1500]}\n\n"
+            f"TRANSCRIPT END:\n{_transcript(transcript, last=6)}\n\nFinal answer only:"
         )
-        verdict = (await self._judge_chat(system, user)).strip().upper()
-        return "SOLVED" not in verdict
+        extracted = (await self._judge_chat(system, user)).strip()
+        if not extracted or extracted.upper() == "NONE":
+            return True  # no final answer -> still failing
+        return normalize_answer(extracted) != normalize_answer(instance.ground_truth)
 
 
 def speaker_schedule(instance: WhoWhenInstance) -> list[tuple[str, bool]]:

@@ -35,7 +35,11 @@ def main(
     concurrency: int = typer.Option(4),
 ) -> None:
     instances = fetch_subset("Algorithm-Generated", REPO_ROOT / "data" / "whowhen", limit=n)
-    world = LLMWorldModel(ollama_chat(model))
+    # Hot surrogate (resampling needs stochasticity); cold, short-output judge (extraction only).
+    world = LLMWorldModel(
+        ollama_chat(model),
+        judge_chat=ollama_chat(model, temperature=0.0, max_tokens=80),
+    )
 
     async def _run() -> None:
         agent_hits = step_hits = step_pm3 = factual_ok = 0

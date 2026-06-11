@@ -137,3 +137,14 @@ async def test_no_locus_when_nothing_rescues() -> None:
     assert result.locus is None
     assert result.predicted_agent is None
     assert not result.agent_correct
+
+
+def test_normalize_answer() -> None:
+    from car.bench.surrogate import normalize_answer
+
+    assert normalize_answer(" 8. ") == "8"
+    assert normalize_answer("8.0") == "8"
+    assert normalize_answer("1,234") == "1234"
+    assert normalize_answer('"Paris"') == "paris"
+    assert normalize_answer("The answer") == "the answer"
+    assert normalize_answer("4") != normalize_answer("8")

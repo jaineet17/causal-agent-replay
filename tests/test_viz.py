@@ -29,13 +29,24 @@ async def _attribution() -> tuple[Trajectory, Any, Any]:
         user_input="go",
     )
     contrastive = await contrastive_attribution(
-        factual, policy=pivotal_policy(0.3, seed=1), environment=ENV, codec=CODEC,
-        outcome_fn=refund_outcome(), bad_label="inappropriate_refund", k_samples=40,
+        factual,
+        policy=pivotal_policy(0.3, seed=1),
+        environment=ENV,
+        codec=CODEC,
+        outcome_fn=refund_outcome(),
+        bad_label="inappropriate_refund",
+        k_samples=40,
     )
     shapley = await shapley_attribution(
-        factual, policy=pivotal_policy(0.3, seed=1), environment=ENV, codec=CODEC,
-        outcome_fn=refund_outcome(), bad_label="inappropriate_refund",
-        n_permutations=20, samples_per_eval=6, seed=1,
+        factual,
+        policy=pivotal_policy(0.3, seed=1),
+        environment=ENV,
+        codec=CODEC,
+        outcome_fn=refund_outcome(),
+        bad_label="inappropriate_refund",
+        n_permutations=20,
+        samples_per_eval=6,
+        seed=1,
     )
     return factual, contrastive, shapley
 

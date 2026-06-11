@@ -80,8 +80,13 @@ async def shapley_attribution(
     confidence: float = 0.95,
     budget: Budget | None = None,
     seed: int = 0,
+    max_concurrency: int = 1,
 ) -> ShapleyResult:
-    """Estimate each step's Shapley value (contribution to the bad outcome), with CLT CIs."""
+    """Estimate each step's Shapley value (contribution to the bad outcome), with CLT CIs.
+
+    ``max_concurrency`` bounds in-flight rollouts within each coalition evaluation; raise it for
+    real models, keep 1 for byte-reproducible synthetic runs.
+    """
     n = len(factual.steps)
     players = list(range(n))
     marginals: dict[int, list[float]] = {k: [] for k in players}
@@ -103,6 +108,7 @@ async def shapley_attribution(
                 bad_label,
                 samples_per_eval,
                 budget,
+                max_concurrency,
             )
             if antithetic:
                 m_rev = await _walk(
@@ -115,6 +121,7 @@ async def shapley_attribution(
                     bad_label,
                     samples_per_eval,
                     budget,
+                    max_concurrency,
                 )
                 for k in players:
                     marginals[k].append((m_fwd[k] + m_rev[k]) / 2.0)
@@ -167,6 +174,7 @@ async def _walk(
     bad_label: str,
     samples_per_eval: int,
     budget: Budget | None,
+    max_concurrency: int,
 ) -> dict[int, float]:
     """Walk one permutation, returning the marginal contribution of each step.
 
@@ -174,7 +182,16 @@ async def _walk(
     """
     held: set[int] = set()
     prev = await _value(
-        factual, held, policy, environment, codec, outcome_fn, bad_label, samples_per_eval, budget
+        factual,
+        held,
+        policy,
+        environment,
+        codec,
+        outcome_fn,
+        bad_label,
+        samples_per_eval,
+        budget,
+        max_concurrency,
     )
     out: dict[int, float] = {}
     for step in perm:
@@ -189,6 +206,7 @@ async def _walk(
             bad_label,
             samples_per_eval,
             budget,
+            max_concurrency,
         )
         out[step] = cur - prev
         prev = cur
@@ -205,6 +223,7 @@ async def _value(
     bad_label: str,
     samples_per_eval: int,
     budget: Budget | None,
+    max_concurrency: int,
 ) -> float:
     """v(S) = P(bad | the steps in ``held`` take their factual actions, the rest are resampled)."""
     dist = await coalition_distribution(
@@ -217,6 +236,7 @@ async def _value(
         k_samples=samples_per_eval,
         budget=budget,
         label="shapley",
+        max_concurrency=max_concurrency,
     )
     return dist.prob_label(bad_label)
 

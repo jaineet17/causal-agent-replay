@@ -79,8 +79,13 @@ async def contrastive_attribution(
     k_samples: int = 16,
     confidence: float = 0.95,
     budget: Budget | None = None,
+    max_concurrency: int = 1,
 ) -> ContrastiveResult:
-    """Attribute the bad outcome to a single step by contrastive resampling."""
+    """Attribute the bad outcome to a single step by contrastive resampling.
+
+    ``max_concurrency`` bounds in-flight rollouts per step; raise it for real models (the K
+    counterfactual samples are independent), keep 1 for byte-reproducible synthetic runs.
+    """
     observed = await observed_distribution(factual, outcome_fn)
     observed_label = observed.labels[0] if observed.labels else ""
 
@@ -96,6 +101,7 @@ async def contrastive_attribution(
             k_samples=k_samples,
             budget=budget,
             label=f"contrastive-{k}",
+            max_concurrency=max_concurrency,
         )
         effect = prob_label_effect(observed, dist, bad_label, confidence=confidence)
         per_step.append(

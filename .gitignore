@@ -21,3 +21,7 @@ data/traces/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# Local operational notes (personal publishing handoffs) — not project docs
+PUBLISH_HANDOFF.md
+ARXIV_SUBMISSION.md

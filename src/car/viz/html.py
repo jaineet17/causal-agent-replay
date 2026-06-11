@@ -24,8 +24,9 @@ from car.attribute.shapley import ShapleyResult
 from car.schemas.trajectory import Trajectory
 
 
-def _action_summary(kind: str, tool_name: str | None, tool_args: dict[str, Any] | None,
-                    text: str | None) -> str:
+def _action_summary(
+    kind: str, tool_name: str | None, tool_args: dict[str, Any] | None, text: str | None
+) -> str:
     if kind == "final":
         return f"FINAL: {(text or '').strip()[:120]}"
     args = ", ".join(f"{k}={v!r}" for k, v in (tool_args or {}).items())
@@ -105,10 +106,7 @@ def render_html(
     """Return a complete, self-contained interactive HTML document."""
     payload = build_payload(factual, contrastive, shapley=shapley, good_label=good_label)
     data_json = json.dumps(payload)
-    return (
-        _TEMPLATE.replace("__TITLE__", html.escape(title))
-        .replace("__DATA__", data_json)
-    )
+    return _TEMPLATE.replace("__TITLE__", html.escape(title)).replace("__DATA__", data_json)
 
 
 _TEMPLATE = r"""<!DOCTYPE html>

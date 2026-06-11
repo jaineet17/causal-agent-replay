@@ -74,6 +74,37 @@ Phases 0–4 are complete and validated against synthetic SCMs with known ground
 - **Phase 2 — distributional outcomes + effect estimators (with confidence intervals).** ✅
 - **Phase 3 — causal attribution (contrastive + budget-bounded Monte-Carlo Shapley).** ✅
 - **Phase 4 — interactive visualization + technical writeup.** ✅
+- **Phase 5 — framework adapters: LangGraph/LangChain `create_agent`.** ✅ (OpenAI Agents SDK next)
+
+## Record *your* agent (LangGraph / LangChain 1.x)
+
+```bash
+pip install 'causal-agent-replay[langgraph]'
+```
+
+```python
+from langchain.agents import create_agent
+from car.adapters.langgraph import LangGraphRecorder, LangChainPolicy, LangChainToolEnvironment
+
+recorder = LangGraphRecorder()                      # an AgentMiddleware
+agent = create_agent(model, tools, system_prompt=..., middleware=[recorder])
+await agent.ainvoke({"messages": [HumanMessage("...")]})
+
+trajectory = recorder.trajectory("my-run")          # a CAR trajectory, held to the same
+                                                    # faithfulness invariant as the native recorder
+result = await contrastive_attribution(
+    trajectory,
+    policy=LangChainPolicy(model),                  # resample YOUR model
+    environment=LangChainToolEnvironment(tools),    # rerun YOUR tools on counterfactual branches
+    codec=codec_for("langchain"),
+    outcome_fn=..., bad_label=...,
+)
+print(result.causal_locus)
+```
+
+Scope (v1, refused loudly rather than mis-recorded): `create_agent`-shaped tool loops, one tool
+call per turn (`disable_parallel_tool_calls()` is provided), string-returning tools. See
+`RESEARCH/phase_5_adapters.md` for the faithfulness analysis.
 
 ## Why this is honest about hard things
 

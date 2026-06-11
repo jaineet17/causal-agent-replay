@@ -289,6 +289,23 @@ class OpenAICodec:
         return Action(kind=kind, text=text, tool_name=tool_name, tool_args=tool_args, raw=raw)
 
 
+class LangChainProjectionCodec(OpenAICodec):
+    """OpenAI codec variant matching LangChain's ``convert_to_openai_messages`` projection.
+
+    The projection adds ``"name"`` to tool messages (from ``ToolMessage.name``); the rebuild must
+    emit the identical dict or the faithfulness digest check fails. Lives in core (it is pure
+    dict shaping) so ``codec_for("langchain")`` works without the optional langgraph extra.
+    """
+
+    def tool_result_message(self, action: Action, observation: Observation) -> dict[str, Any]:
+        return {
+            "role": "tool",
+            "name": observation.tool_name,
+            "tool_call_id": self._tool_call_id(action),
+            "content": observation.result,
+        }
+
+
 # Sampling params the OpenAI-compatible wire format accepts (Ollama maps seed/temperature/top_p
 # onto its native options; RESEARCH: local seeded inference is far more deterministic than hosted).
 _OPENAI_SAMPLING_KEYS = ("temperature", "top_p", "seed", "frequency_penalty", "presence_penalty")
@@ -459,6 +476,10 @@ def codec_for(provider: Provider) -> MessageCodec:
         return AnthropicCodec()
     if provider == "openai":
         return OpenAICodec()
+    if provider == "langchain":
+        # LangGraph-adapter trajectories store messages via LangChain's OpenAI projection,
+        # which adds "name" on tool messages (RESEARCH phase_5).
+        return LangChainProjectionCodec()
     if provider == "synthetic":
         return SyntheticCodec()
     raise ReplayError(f"no codec for provider {provider!r}")
@@ -471,6 +492,12 @@ def policy_for(provider: Provider, model: str) -> Policy:
         # base_url / api_key come from OPENAI_BASE_URL / OPENAI_API_KEY (set these to point at
         # Ollama, Groq, etc. when replaying an OpenAI-compatible recording).
         return OpenAICompatiblePolicy(model)
+    if provider == "langchain":
+        raise ReplayError(
+            "a 'langchain' trajectory replays against the caller's chat-model object, which "
+            "cannot be reconstructed from a model-id string — construct "
+            "car.adapters.langgraph.LangChainPolicy(your_model) and pass it explicitly"
+        )
     raise ReplayError(
         f"cannot reconstruct a {provider!r} policy outside its fixture "
         f"(synthetic policies are in-process)"

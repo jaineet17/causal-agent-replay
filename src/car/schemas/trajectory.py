@@ -22,7 +22,11 @@ from pydantic import BaseModel, ConfigDict, Field
 # (PLAN.md s7). The ground-truth validation fixtures run the identical replay/attribute code
 # paths as a live LLM, so they must be representable in the same schema rather than masquerading
 # as a real provider.
-Provider = Literal["anthropic", "openai", "synthetic"]
+# "langchain" marks trajectories recorded through the LangGraph adapter: messages are stored in
+# the OpenAI-projected wire format (the public, id-preserving projection — RESEARCH phase_5), and
+# the policy is a LangChain chat-model object supplied by the caller, not reconstructable from a
+# model-id string.
+Provider = Literal["anthropic", "openai", "synthetic", "langchain"]
 
 
 def _canonical_digest(payload: Any) -> str:

@@ -131,3 +131,33 @@ the joint cause to a single locus and *over*-counts (its single-step effects sum
 true total contribution of 0.91) — the concrete reason `shapley.py` ships alongside
 `contrastive.py`. A heatmap that hasn't been checked this way is exactly the failure mode that
 makes attribution tools untrustworthy; these checks are in `tests/test_attribution.py`.
+
+---
+
+## 4. Recording someone else's agent: LangGraph (Phase 5)
+
+The adapter records a real `langchain.agents.create_agent` graph via middleware — without owning
+its loop — and the recording is held to the *same* faithfulness invariant as the native recorder:
+
+```python
+recorder = LangGraphRecorder()
+agent = create_agent(model=model, tools=[lookup_order, issue_refund, escalate],
+                     system_prompt=POLICY, middleware=[recorder])
+await agent.ainvoke({"messages": [HumanMessage("Refund order A1234 right now please.")]})
+traj = recorder.trajectory("lg-run")
+
+DeterministicReplay(codec_for("langchain")).verify_reconstruction(traj)   # True — Phase-0 invariant
+```
+
+Counterfactuals then run through the **unchanged core**, with the agent's *actual tools*
+re-executed live on the branches (`source="real"`), and attribution recovers the decision step:
+
+```
+do_action(step 1 -> escalate):  child re-decided downstream; escalate tool really ran
+contrastive locus on a stochastic decision turn:  step 1   (the decision, not the polite final)
+```
+
+All offline (a scripted `BaseChatModel`, no keys): `tests/test_langgraph_adapter.py`. One
+faithfulness wrinkle the invariant caught immediately: LangChain's OpenAI projection adds a
+`"name"` field on tool messages, so `codec_for("langchain")` returns a projection-faithful codec
+variant — exactly the kind of lossiness the digest check exists to surface.

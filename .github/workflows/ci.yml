@@ -1,0 +1,25 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Install (incl. both adapter extras via dev)
+        run: uv sync --extra dev
+      - name: Lint
+        run: uv run ruff check src tests scripts
+      - name: Format check
+        run: uv run ruff format --check src tests scripts
+      - name: Types (mypy --strict on src)
+        run: uv run mypy
+      - name: Tests
+        run: uv run pytest -q
+      - name: Build distribution
+        run: uv build

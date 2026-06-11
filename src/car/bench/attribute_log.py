@@ -162,13 +162,21 @@ async def attribute_log(
             locus = se.index
 
     # The benchmark expects a prediction on every instance: when no step clears the CI gate,
-    # fall back to the agent step with the largest rescue point-estimate (flagged unconfident).
+    # fall back to point estimates — but apply the SAME point-of-commitment logic. Under
+    # run-forward, resampling an early step re-rolls everything downstream (including the true
+    # mistake), so early steps rescue often and a plain argmax is biased early (observed on
+    # AG/2 in the pilot). Instead: the LATEST agent step whose rescue rate is within tolerance
+    # of the maximum.
     predicted_step = locus
     confident = locus is not None
     if predicted_step is None:
         agent_steps = [se for se in per_step if not se.is_env]
         if agent_steps:
-            predicted_step = min(agent_steps, key=lambda se: se.effect.point).index
+            best_rescue = max(-se.effect.point for se in agent_steps)
+            tolerance = max(0.8 * best_rescue, best_rescue - 0.15)
+            for se in agent_steps:
+                if -se.effect.point >= tolerance:
+                    predicted_step = se.index
     predicted_agent = instance.history[predicted_step].agent if predicted_step is not None else None
 
     result = LogAttribution(

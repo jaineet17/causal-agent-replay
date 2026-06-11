@@ -28,13 +28,16 @@ app = typer.Typer(add_completion=False)
 
 @app.command()
 def main(
-    n: int = typer.Option(5, help="Instances to run (first N by id)."),
+    n: int = typer.Option(5, help="Instances to run."),
+    start: int = typer.Option(0, help="Skip the first START instances (resume support)."),
     model: str = typer.Option("llama3.2:latest", help="Ollama model for surrogate+judge."),
     k_max: int = typer.Option(8),
     horizon: int = typer.Option(0, help="Roll-forward horizon (0 = to the end of the log)."),
     concurrency: int = typer.Option(4),
 ) -> None:
-    instances = fetch_subset("Algorithm-Generated", REPO_ROOT / "data" / "whowhen", limit=n)
+    instances = fetch_subset(
+        "Algorithm-Generated", REPO_ROOT / "data" / "whowhen", limit=start + n
+    )[start:]
     # Hot surrogate (resampling needs stochasticity); cold, short-output judge (extraction only).
     world = LLMWorldModel(
         ollama_chat(model),

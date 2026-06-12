@@ -56,6 +56,11 @@ def ollama_chat(model: str, *, temperature: float = 0.9, max_tokens: int = 700) 
     client = AsyncOpenAI(
         base_url=os.environ.get("OPENAI_BASE_URL", "http://localhost:11434/v1"),
         api_key=os.environ.get("OPENAI_API_KEY", "ollama"),
+        # A hung local call must fail fast and retry, not wedge a 20-hour run (observed once
+        # after a presumed sleep/wake: silent log, idle llama-server, in-flight call never
+        # returning).
+        timeout=180.0,
+        max_retries=2,
     )
 
     async def chat(system: str, user: str) -> str:

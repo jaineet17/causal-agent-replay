@@ -35,10 +35,18 @@ def main(
     results: Path = typer.Option(REPO_ROOT / "data" / "whowhen" / "results_ag.jsonl"),
     limit: int = typer.Option(0, help="0 = all instances."),
     per_instance_minutes: float = typer.Option(
-        20.0,
-        help="Hard wall-clock cap per instance. A healthy instance finishes in ~5-40 min; this "
-        "abandons one wedged by local-inference degradation (recorded as a timeout row) so it "
-        "can never eat the whole run (observed: a normally-40-min instance ballooned to 45-73h).",
+        30.0,
+        help="Hard wall-clock cap per instance; abandons one wedged by inference degradation "
+        "(recorded as a timeout row) so it can never eat the whole run.",
+    ),
+    horizon: int = typer.Option(
+        5,
+        help="Forward-rollout horizon: resample step k, roll m steps, then judge. Caps the "
+        "O(n_steps^2) blow-up (RESEARCH s4 lever; AgentDebug: outcomes flip within a few steps). "
+        "0 = roll to the end of the log.",
+    ),
+    surrogate_max_tokens: int = typer.Option(
+        250, help="Per surrogate generation (700 was ~12s/call on a local 3B; 250 is ~5s)."
     ),
 ) -> None:
     instances = fetch_subset(
@@ -66,7 +74,7 @@ def main(
     typer.echo(f"{len(instances)} instances; {len(done)} done; {len(todo)} to run")
 
     world = LLMWorldModel(
-        ollama_chat(model),
+        ollama_chat(model, max_tokens=surrogate_max_tokens),
         judge_chat=ollama_chat(model, temperature=0.0, max_tokens=80),
     )
 
@@ -76,7 +84,13 @@ def main(
             started = time.time()
             try:
                 r = await asyncio.wait_for(
-                    attribute_log(inst, world, k_max=k_max, max_concurrency=concurrency),
+                    attribute_log(
+                        inst,
+                        world,
+                        k_max=k_max,
+                        max_concurrency=concurrency,
+                        horizon=horizon or None,
+                    ),
                     timeout=per_instance_minutes * 60.0,
                 )
                 row = {

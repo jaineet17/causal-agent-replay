@@ -34,6 +34,12 @@ def main(
     concurrency: int = typer.Option(4, help="In-flight rollouts (keep moderate: shared machine)."),
     results: Path = typer.Option(REPO_ROOT / "data" / "whowhen" / "results_ag.jsonl"),
     limit: int = typer.Option(0, help="0 = all instances."),
+    per_instance_minutes: float = typer.Option(
+        20.0,
+        help="Hard wall-clock cap per instance. A healthy instance finishes in ~5-40 min; this "
+        "abandons one wedged by local-inference degradation (recorded as a timeout row) so it "
+        "can never eat the whole run (observed: a normally-40-min instance ballooned to 45-73h).",
+    ),
 ) -> None:
     instances = fetch_subset(
         "Algorithm-Generated", REPO_ROOT / "data" / "whowhen", limit=limit or None
@@ -59,7 +65,10 @@ def main(
         for n_done, inst in enumerate(todo, start=1):
             started = time.time()
             try:
-                r = await attribute_log(inst, world, k_max=k_max, max_concurrency=concurrency)
+                r = await asyncio.wait_for(
+                    attribute_log(inst, world, k_max=k_max, max_concurrency=concurrency),
+                    timeout=per_instance_minutes * 60.0,
+                )
                 row = {
                     "instance_id": r.instance_id,
                     "predicted_agent": r.predicted_agent,
@@ -90,6 +99,12 @@ def main(
                 step_hits += r.step_within(0)
                 pm3 += r.step_within(3)
                 sane += r.factual_still_fails
+            except TimeoutError:
+                row = {
+                    "instance_id": inst.instance_id,
+                    "error": f"timeout: exceeded {per_instance_minutes} min (inference wedged)",
+                    "elapsed_s": round(time.time() - started, 1),
+                }
             except Exception as exc:  # record, never silently skip (PLAN.md s0.9)
                 row = {
                     "instance_id": inst.instance_id,

@@ -45,13 +45,23 @@ def main(
         "Algorithm-Generated", REPO_ROOT / "data" / "whowhen", limit=limit or None
     )
     results.parent.mkdir(parents=True, exist_ok=True)
-    done: set[str] = set()
+    # Dedupe to the LAST row per instance; an instance is "done" only if its latest outcome is a
+    # success or a genuine timeout (inference wedged) — transient connection/API errors are
+    # retried on resume rather than permanently skipped.
+    last_row: dict[str, dict] = {}
     if results.exists():
         for line in results.read_text().splitlines():
             try:
-                done.add(json.loads(line)["instance_id"])
+                row = json.loads(line)
+                last_row[row["instance_id"]] = row
             except (json.JSONDecodeError, KeyError):
                 continue
+
+    def is_done(row: dict) -> bool:
+        err = row.get("error", "")
+        return "error" not in row or err.startswith("timeout:")
+
+    done = {iid for iid, row in last_row.items() if is_done(row)}
     todo = [i for i in instances if i.instance_id not in done]
     typer.echo(f"{len(instances)} instances; {len(done)} done; {len(todo)} to run")
 

@@ -85,7 +85,13 @@ RULES = {
 def main(
     results: Path = typer.Option(REPO_ROOT / "data" / "whowhen" / "results_ag.jsonl"),
 ) -> None:
-    rows = [json.loads(line) for line in results.read_text().splitlines() if line.strip()]
+    # Dedupe to the last row per instance (instances may be retried across resumes).
+    last: dict[str, dict] = {}
+    for line in results.read_text().splitlines():
+        if line.strip():
+            r = json.loads(line)
+            last[r["instance_id"]] = r
+    rows = list(last.values())
     ok = [r for r in rows if "error" not in r]
     errors = [r for r in rows if "error" in r]
     sane = [r for r in ok if r.get("factual_still_fails")]

@@ -25,3 +25,6 @@ data/traces/
 # Local operational notes (personal publishing handoffs) — not project docs
 PUBLISH_HANDOFF.md
 ARXIV_SUBMISSION.md
+
+# Who&When benchmark cache + results (dataset has no published license — never commit)
+data/whowhen/

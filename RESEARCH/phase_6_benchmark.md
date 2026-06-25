@@ -81,3 +81,52 @@ arXiv:2505.00212 · HF Kevin355/Who_and_When · github.com/ag2ai/Agents_Failure_
 2509.13782 (FAMAS) · 2509.03312 · 2509.10401 · 2509.08682 · 2510.04886 · 2603.25001 (MP-Bench) ·
 2603.11245 (Sim2Real) · 2604.22708 (TraceElephant) · 2605.07509 (MASPrism) · 2309.15817 (ToolEmu)
 · 1811.06272 (CF-GPS). Accessed 2026-06-11.
+
+---
+
+## Results (full AG run) — 2026-06-25
+
+**Setup.** Algorithm-Generated subset, surrogate-counterfactual attribution with a **free local
+`llama3.2` (3B)** for all three roles (agent surrogate, GT-grounded environment simulator, and the
+extract-then-compare outcome judge). Per-step `do_resample`, K≤8 with CI-aware early stopping
+(median realized K = 8/step, mean 69 rollouts/instance), horizon = 5, w/-ground-truth judge.
+**N = 121/126 evaluated**; 5 excluded as infrastructure casualties (1 wall-clock timeout, 4
+transient connection errors across local-inference wedges / system sleep — not method failures).
+The full run was ~a week of intermittent local compute; the runner tuning that made it tractable
+is the §"Hard parts" lesson, not a result.
+
+**Sanity floor: 120/121 (99%)** — the unmodified factual log is judged "still failing", so the
+counterfactual rescues are measured against a correct baseline.
+
+| rule (re-derived offline on the same rollouts) | predicts on | agent | step exact | step ±1 | step ±3 |
+|---|---|---|---|---|---|
+| `ci_locus` (CI excludes 0; abstains otherwise) | 22/121 | 7.4% | 4.1% | 7.4% | 14.9% |
+| `argmax` (max rescue rate) | 121/121 | **48.8%** | **20.7%** | 41.3% | **71.9%** |
+| `latest_tol` (latest within tol of max) | 121/121 | 43.8% | 14.9% | 28.1% | 54.5% |
+| `cliff` (largest consecutive rescue drop) | 121/121 | **49.6%** | 15.7% | 38.8% | 68.6% |
+
+(Accuracies over all 121 ok rows; abstentions count as misses.)
+
+**Reading vs the field.** The fair comparator is **FAMAS** (the only other replay/resampling
+method): **55.6% agent / 23.8% step** on AG — using a **72B** surrogate. CAR's best point-estimate
+rule reaches **~49% agent / 20.7% step exact / 71.9% within ±3 with a 3B surrogate (~24× smaller)**.
+Step-exact 20.7% **clears the original LLM-judge baseline (14.2%)** and **approaches FAMAS's
+replay-based 23.8%**; agent accuracy sits below FAMAS but near the judge baselines. The honest
+headline is *competitiveness with a far larger replay method on a real benchmark*, not SOTA — and
+exactly the "surrogate-counterfactual attribution" framing committed to up front.
+
+**The load-bearing limitation (a genuine finding).** The principled CI-gated locus (`ci_locus`),
+which is CAR's headline rule on the validated synthetic SCMs, **fires on only 22/121 here**: at
+K≤8 with a noisy 3B surrogate, per-step rescue rarely reaches significance, so the rule abstains on
+82% of instances. The point-estimate rules (`argmax`/`cliff`) carry the result. This is the
+**K-vs-confidence tradeoff made concrete**: CI-gated attribution needs either more rollouts (higher
+K, more compute) or a lower-variance surrogate to fire on real, noisy traces. It is a paper-worthy
+result in its own right — and the reason the synthetic-SCM validation (where the surrogate IS the
+ground-truth policy and CI gating works) remains the trustworthy core, with the benchmark reported
+as a surrogate-bounded application.
+
+**Validity threats, as reported (per §5):** (1) surrogate ≠ original 2024-era policies — these are
+*surrogate*-counterfactual effects; the 99% factual-replay sanity floor bounds gross infidelity but
+not directional bias. (2) human "decisive error step" ≠ counterfactual locus (MP-Bench) — hence the
+±1/±3 tolerance curves alongside exact match. (3) GT-grounded env simulation and a w/-GT judge are
+disclosed design choices that make the w/-GT setting tractable; the w/o-GT setting was not run.

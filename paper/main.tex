@@ -34,8 +34,11 @@ budget-bounded Monte-Carlo Shapley estimator that splits credit across interacti
 effect is reported with confidence intervals. We validate against synthetic structural causal
 models with planted ground truth: the contrastive estimator recovers the pivotal step, and Shapley
 recovers a two-step interaction ($\phi_0{=}0.44,\ \phi_1{=}0.45,\ \phi_2{\approx}0$; efficiency
-sum $0.909$ versus the analytic $0.91$). CAR is open source and runs on hosted or free local
-models.
+sum $0.909$ versus the analytic $0.91$). Applied to the \textsc{Who\&When} failure-attribution
+benchmark through a surrogate world-model, CAR reaches $20.7\%$ step-exact accuracy with a free
+local $3$B surrogate---clearing the LLM-judge baseline ($14.2\%$) and approaching the only other
+replay-based method ($23.8\%$) at $\sim\!24\times$ smaller scale. CAR is open source and runs on
+hosted or free local models.
 \end{abstract}
 
 \section{Introduction}
@@ -70,7 +73,10 @@ not make, and it is the contribution of Causal Agent Replay (CAR).
   \item We give a budget-bounded Monte-Carlo \emph{Shapley} estimator that splits credit across
   interacting steps, where single-step methods structurally cannot.
   \item We validate against synthetic SCMs with \emph{known} ground truth, which we argue is
-  non-optional for any attribution method (Section~\ref{sec:eval}).
+  non-optional for any attribution method (Section~\ref{sec:eval}), and evaluate on the
+  \textsc{Who\&When} benchmark through a surrogate world-model (Section~\ref{sec:bench}), where a
+  $3$B surrogate is competitive with a $72$B replay method---and where the CI-gated rule's
+  abstention exposes a $K$-versus-confidence tradeoff.
 \end{enumerate}
 
 \section{An agent run as a structural causal model}
@@ -184,6 +190,74 @@ visible.}
 \label{fig:demo}
 \end{figure}
 
+\section{Evaluation on the Who\&When benchmark}
+\label{sec:bench}
+
+Ground-truth SCMs establish that the estimators are correct; a real benchmark asks whether the
+method is useful on traces we did not construct. We evaluate on the Algorithm-Generated subset of
+\textsc{Who\&When}~\cite{whowhen} (126 annotated multi-agent failure logs, each labelled with the
+responsible agent and the step of its first decisive error).
+
+\paragraph{Surrogate-counterfactual replay.} \textsc{Who\&When} is a set of \emph{static} logs, and
+the original agents are unavailable, so CAR's \texttt{do\_resample} cannot re-execute the true
+policy. We therefore replay from the logs with a \emph{surrogate world-model}: a single LLM stands
+in for the agents (role-conditioned on the logged prefix), an explicit environment-simulator role
+produces tool/observation outputs on counterfactual branches (following LLM-as-environment
+work~\cite{toolemu}), and an extract-then-compare judge labels whether a continuation still fails
+against the known answer. This is the formal ``hold the factual prefix, intervene on the action,
+roll forward'' of counterfactual off-policy evaluation~\cite{cfgps}, and it mirrors the only prior
+replay-based method on this benchmark, FAMAS~\cite{famas}. All three roles use a \emph{free local
+$3$B model} (\texttt{llama3.2}); per-step \texttt{do\_resample} with $K\le 8$ and CI-aware early
+stopping, a $5$-step roll-forward horizon, in the with-ground-truth-answer setting. Of $126$
+instances, $121$ completed ($5$ were local-infrastructure casualties, not method failures); on a
+\textbf{sanity floor} the unmodified factual log is judged still-failing on $120/121$ ($99\%$), so
+rescues are measured against a correct baseline.
+
+The decision rule that turns a per-step rescue curve into a $(\text{agent},\text{step})$ prediction
+is cheap and re-derivable offline, so we compare rules on identical rollouts. Table~\ref{tab:bench}
+reports the best point-estimate rule (\emph{argmax} of the rescue rate) and a commitment-cliff
+variant against the field.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{llccc}
+\toprule
+Method & Surrogate & Agent-acc. & Step-exact & Step $\pm3$ \\
+\midrule
+\textsc{Who\&When} LLM-judge baseline~\cite{whowhen} & GPT-4o & 53.5 & 14.2 & --- \\
+FAMAS (replay)~\cite{famas} & Qwen2.5-72B & \textbf{55.6} & \textbf{23.8} & --- \\
+\midrule
+CAR, \emph{argmax} rule (ours) & \texttt{llama3.2}-3B & 48.8 & 20.7 & \textbf{71.9} \\
+CAR, \emph{cliff} rule (ours) & \texttt{llama3.2}-3B & 49.6 & 15.7 & 68.6 \\
+\bottomrule
+\end{tabular}
+\caption{Step- and agent-level attribution accuracy (\%) on \textsc{Who\&When} Algorithm-Generated.
+CAR is evaluated over $121/126$ instances with a $3$B surrogate; prior numbers as reported. A dash
+denotes a metric the source does not report.}
+\label{tab:bench}
+\end{table}
+
+\paragraph{Reading.} CAR's step-exact accuracy of $20.7\%$ \emph{clears the original LLM-judge
+baseline} ($14.2\%$) and \emph{approaches the only other replay-based method}, FAMAS ($23.8\%$),
+while using a surrogate roughly $24\times$ smaller ($3$B vs.\ $72$B); it lands within $\pm3$ steps
+$72\%$ of the time. Agent-level accuracy ($\approx49\%$) sits below FAMAS but near the judge
+baselines. We read this as \emph{competitiveness with a far larger replay method on a real
+benchmark}, not state of the art---consistent with the ``surrogate-counterfactual attribution''
+framing: the numbers reflect causal structure under the surrogate world-model, not the original
+policy.
+
+\paragraph{The CI gate does not fire on noisy traces.} The principled point-of-commitment rule of
+Section~\ref{sec:attr}---which requires a step's rescue confidence interval to exclude zero---fires
+on only $22/121$ instances here. At $K\le 8$ with a noisy $3$B surrogate, per-step rescue rates
+rarely reach significance, so the CI-gated rule abstains on $82\%$ of instances and the
+point-estimate rules carry the result. This is the $K$-versus-confidence tradeoff made concrete:
+CI-gated attribution needs either more rollouts or a lower-variance surrogate to fire on real,
+noisy traces. It also delimits the trust boundary of this paper: the CI-gated locus is validated
+where the surrogate \emph{is} the ground-truth policy (Section~\ref{sec:eval}); on
+\textsc{Who\&When} it is a surrogate-bounded application, and the point-estimate rules are what we
+report.
+
 \section{Related work}
 
 Failure attribution for LLM agents became active in 2025--26. \textsc{Who\&When}~\cite{whowhen}
@@ -224,6 +298,15 @@ Attribution of LLM Multi-Agent Systems. \emph{ICML}, 2025. arXiv:2505.00212.
 
 \bibitem{agentracer} AgenTracer: Annotating Failed Multi-Agent Trajectories via Counterfactual
 Replay. 2025. arXiv:2509.03312.
+
+\bibitem{famas} FAMAS: Spectrum-Based Failure Attribution for Multi-Agent Systems via Replay.
+2025. arXiv:2509.13782.
+
+\bibitem{toolemu} Y.~Ruan et al. Identifying the Risks of LM Agents with an LM-Emulated Sandbox
+(ToolEmu). \emph{ICLR}, 2024. arXiv:2309.15817.
+
+\bibitem{cfgps} L.~Buesing et al. Woulda, Coulda, Shoulda: Counterfactually-Guided Policy Search.
+\emph{ICLR}, 2019. arXiv:1811.06272.
 
 \bibitem{causalattr2025} Y.~Ma et al. Automatic Failure Attribution and Critical Step Prediction
 via Causal Inference. 2025. arXiv:2509.08682.
